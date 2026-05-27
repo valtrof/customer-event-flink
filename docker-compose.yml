@@ -1,0 +1,80 @@
+version: "3.8"
+
+# Kafka needs two listener addresses:
+#   PLAINTEXT://kafka:29092  — used by the Flink job running inside the Docker network
+#   PLAINTEXT_HOST://localhost:9092  — used by the producer running on the host machine
+x-kafka-listeners: &kafka-listeners
+  KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+  KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+  KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+
+x-flink-env: &flink-env
+  FLINK_PROPERTIES: |
+    jobmanager.rpc.address: jobmanager
+    taskmanager.numberOfTaskSlots: 4
+    parallelism.default: 1
+    state.backend: hashmap
+    execution.checkpointing.interval: 60000
+
+services:
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    hostname: zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo ruok | nc localhost 2181"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    hostname: kafka
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    ports:
+      - "9092:9092"
+    environment:
+      <<: *kafka-listeners
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: "zookeeper:2181"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_LOG_RETENTION_HOURS: 1
+    healthcheck:
+      test: ["CMD", "kafka-topics", "--bootstrap-server", "localhost:9092", "--list"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+
+  jobmanager:
+    build: .
+    hostname: jobmanager
+    command: jobmanager
+    ports:
+      - "8081:8081"   # Flink Web UI
+    environment:
+      <<: *flink-env
+    volumes:
+      - ./pipeline:/opt/flink/jobs
+      - flink-output:/tmp/flink-output
+
+  taskmanager:
+    build: .
+    hostname: taskmanager
+    depends_on:
+      - jobmanager
+      - kafka
+    command: taskmanager
+    environment:
+      <<: *flink-env
+    volumes:
+      - ./pipeline:/opt/flink/jobs
+      - flink-output:/tmp/flink-output
+
+volumes:
+  flink-output:
+    driver: local

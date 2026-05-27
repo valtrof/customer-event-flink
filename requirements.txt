@@ -1,0 +1,8 @@
+# Flink job (version must match the Flink image in Dockerfile)
+apache-flink==1.18.1
+
+# Kafka producer (run locally against localhost:9092)
+confluent-kafka==2.3.0
+
+# Fake data generation for the producer
+faker==24.0.0
